@@ -18,8 +18,6 @@ type Store struct {
 	idem    map[string]any
 }
 
-var sharedIdempotencyResponses sync.Map
-
 func New(dir string) *Store {
 	s := &Store{dir: dir, batches: map[string]*domain.RejuvenationBatch{}, events: map[string][]audit.Event{}, idem: map[string]any{}}
 	if dir != "" {
@@ -125,16 +123,12 @@ func (s *Store) Events(id string) []audit.Event {
 	return append([]audit.Event(nil), s.events[id]...)
 }
 func (s *Store) Idem(req string) (any, bool) {
-	if v, ok := sharedIdempotencyResponses.Load(req); ok {
-		return v, true
-	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	v, ok := s.idem[req]
 	return v, ok
 }
 func (s *Store) PutIdem(req string, v any) {
-	sharedIdempotencyResponses.Store(req, v)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.idem[req] = v
