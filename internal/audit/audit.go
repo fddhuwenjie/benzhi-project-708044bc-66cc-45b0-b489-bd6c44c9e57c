@@ -35,12 +35,30 @@ func HashEvent(prev string, e Event) string {
 	return hex.EncodeToString(h[:])
 }
 
+// normalizePayload detaches the payload from any caller-owned mutable state by
+// round-tripping it through JSON. This guarantees that a stored event retains a
+// snapshot of the payload as it was at commit time, so later mutations to the
+// returned response object cannot alter the committed audit event. The
+// transformation is idempotent and matches the normalization HashEvent already
+// applies when computing the hash, so existing hashes are unchanged.
+func normalizePayload(p any) any {
+	raw, err := json.Marshal(p)
+	if err != nil {
+		return fmt.Sprint(p)
+	}
+	var normalized any
+	if err := json.Unmarshal(raw, &normalized); err != nil {
+		return fmt.Sprint(p)
+	}
+	return normalized
+}
+
 func Append(events []Event, typ string, rev int, p any) []Event {
 	prev := ""
 	if len(events) > 0 {
 		prev = events[len(events)-1].Hash
 	}
-	e := Event{Revision: rev, Type: typ, Payload: p, PrevHash: prev}
+	e := Event{Revision: rev, Type: typ, Payload: normalizePayload(p), PrevHash: prev}
 	e.Hash = HashEvent(prev, e)
 	return append(events, e)
 }
