@@ -11,12 +11,11 @@ import (
 )
 
 type Store struct {
-	mu        sync.RWMutex
-	dir       string
-	batches   map[string]*domain.RejuvenationBatch
-	events    map[string][]audit.Event
-	idem      map[string]any
-	listCache []*domain.RejuvenationBatch
+	mu      sync.RWMutex
+	dir     string
+	batches map[string]*domain.RejuvenationBatch
+	events  map[string][]audit.Event
+	idem    map[string]any
 }
 
 func New(dir string) *Store {
