@@ -763,13 +763,14 @@ func (a *App) EvidencePackage(id, segment string) (map[string]any, error) {
 	if b.Release == nil {
 		return nil, errors.New("not_found")
 	}
-	if cached, ok := a.evidenceResponses.load(segment); ok {
-		return cached, nil
-	}
-	contents := audit.SegmentContents(b, audit.DecisionFromPackage(b))
 	if segment == "observations" {
 		segment = "observation"
 	}
+	selector := id + ":" + segment
+	if cached, ok := a.evidenceResponses.load(selector); ok {
+		return cached, nil
+	}
+	contents := audit.SegmentContents(b, audit.DecisionFromPackage(b))
 	out := map[string]any{"package_id": b.Release.PackageID, "manifest_digest": b.Release.ManifestDigest, "event_chain_head": b.Release.EventChainHead, "segments": b.Release.Segments}
 	if segment != "" {
 		value, ok := contents[segment]
@@ -786,6 +787,6 @@ func (a *App) EvidencePackage(id, segment string) (map[string]any, error) {
 	} else {
 		out["contents"] = contents
 	}
-	a.evidenceResponses.store(segment, out)
+	a.evidenceResponses.store(selector, out)
 	return out, nil
 }
