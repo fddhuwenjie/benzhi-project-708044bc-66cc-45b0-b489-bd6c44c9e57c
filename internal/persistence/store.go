@@ -3,6 +3,7 @@ package persistence
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"seedvault/internal/audit"
@@ -34,19 +35,44 @@ func (s *Store) load() {
 	i, _ := os.ReadFile(filepath.Join(s.dir, "idempotency.json"))
 	json.Unmarshal(i, &s.idem)
 }
-func (s *Store) persist() {
+func (s *Store) persist() error {
 	if s.dir == "" {
-		return
+		return nil
 	}
-	b, _ := json.Marshal(s.batches)
-	os.WriteFile(filepath.Join(s.dir, "batches.json.tmp"), b, 0644)
-	os.Rename(filepath.Join(s.dir, "batches.json.tmp"), filepath.Join(s.dir, "batches.json"))
-	e, _ := json.Marshal(s.events)
-	os.WriteFile(filepath.Join(s.dir, "events.json.tmp"), e, 0644)
-	os.Rename(filepath.Join(s.dir, "events.json.tmp"), filepath.Join(s.dir, "events.json"))
-	i, _ := json.Marshal(s.idem)
-	os.WriteFile(filepath.Join(s.dir, "idempotency.json.tmp"), i, 0644)
-	os.Rename(filepath.Join(s.dir, "idempotency.json.tmp"), filepath.Join(s.dir, "idempotency.json"))
+	if err := os.MkdirAll(s.dir, 0755); err != nil {
+		return err
+	}
+	b, err := json.Marshal(s.batches)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(s.dir, "batches.json.tmp"), b, 0644); err != nil {
+		return err
+	}
+	if err := os.Rename(filepath.Join(s.dir, "batches.json.tmp"), filepath.Join(s.dir, "batches.json")); err != nil {
+		return err
+	}
+	e, err := json.Marshal(s.events)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(s.dir, "events.json.tmp"), e, 0644); err != nil {
+		return err
+	}
+	if err := os.Rename(filepath.Join(s.dir, "events.json.tmp"), filepath.Join(s.dir, "events.json")); err != nil {
+		return err
+	}
+	i, err := json.Marshal(s.idem)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(s.dir, "idempotency.json.tmp"), i, 0644); err != nil {
+		return err
+	}
+	if err := os.Rename(filepath.Join(s.dir, "idempotency.json.tmp"), filepath.Join(s.dir, "idempotency.json")); err != nil {
+		return err
+	}
+	return nil
 }
 func (s *Store) Get(id string) (*domain.RejuvenationBatch, bool) {
 	s.mu.RLock()
@@ -77,15 +103,38 @@ func (s *Store) saveLocked(b *domain.RejuvenationBatch, typ string, p any, expec
 			return nil, errors.New("read_only")
 		}
 	}
-	b.Revision++
-	s.batches[b.BatchID] = cloneBatch(b)
-	es := audit.Append(s.events[b.BatchID], typ, b.Revision, p)
-	s.events[b.BatchID] = es
+	// Stage all mutations before committing so that a persist failure leaves
+	// the in-memory store at its previous committed state. audit.Append returns
+	// a new slice, so keeping the old reference is enough to roll back.
+	oldEvents := s.events[b.BatchID]
+	var oldIdem any
+	var hadIdem bool
 	if req != "" {
-		s.idem[req] = cloneBatch(b)
+		oldIdem, hadIdem = s.idem[req]
 	}
-	s.persist()
-	return &es[len(es)-1], nil
+	saved := cloneBatch(b)
+	saved.Revision = b.Revision + 1
+	events := audit.Append(oldEvents, typ, saved.Revision, p)
+	s.batches[b.BatchID] = saved
+	s.events[b.BatchID] = events
+	if req != "" {
+		s.idem[req] = cloneBatch(saved)
+	}
+	if err := s.persist(); err != nil {
+		// Roll back to the pre-mutation state; nothing committed may remain.
+		s.batches[b.BatchID] = old
+		s.events[b.BatchID] = oldEvents
+		if req != "" {
+			if hadIdem {
+				s.idem[req] = oldIdem
+			} else {
+				delete(s.idem, req)
+			}
+		}
+		return nil, fmt.Errorf("persist_failed: %w", err)
+	}
+	b.Revision = saved.Revision
+	return &events[len(events)-1], nil
 }
 
 func (s *Store) SaveAndRemember(b *domain.RejuvenationBatch, typ string, p any, expected int, req string) (*audit.Event, error) {
@@ -128,9 +177,13 @@ func (s *Store) Idem(req string) (any, bool) {
 	v, ok := s.idem[req]
 	return v, ok
 }
-func (s *Store) PutIdem(req string, v any) {
+func (s *Store) PutIdem(req string, v any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.idem[req] = v
-	s.persist()
+	if err := s.persist(); err != nil {
+		delete(s.idem, req)
+		return err
+	}
+	return nil
 }

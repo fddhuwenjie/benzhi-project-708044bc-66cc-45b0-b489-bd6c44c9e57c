@@ -99,7 +99,10 @@ func (s *Server) batches(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if request.RequestID != "" {
-		s.App.Store.PutIdem(request.RequestID, b)
+		if err := s.App.Store.PutIdem(request.RequestID, b); err != nil {
+			errw(w, err)
+			return
+		}
 	}
 	write(w, http.StatusCreated, b)
 }

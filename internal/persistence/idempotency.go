@@ -7,6 +7,5 @@ func (s *Store) Remember(request string, response any) bool {
 	if _, ok := s.Idem(request); ok {
 		return true
 	}
-	s.PutIdem(request, response)
-	return false
+	return s.PutIdem(request, response) == nil
 }
